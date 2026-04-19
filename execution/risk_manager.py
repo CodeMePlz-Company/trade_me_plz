@@ -30,12 +30,13 @@ class RiskManager:
     """
 
     def __init__(self,
-                 max_position_pct:  float = 0.10,   # ใช้เงินไม่เกิน 10% ต่อ order
-                 max_daily_loss:    float = 0.05,   # ขาดทุนไม่เกิน 5% ต่อวัน
-                 stop_loss_pct:     float = 0.03,   # hard stop-loss 3%
-                 take_profit_pct:   float = 0.05,   # take-profit 5%
-                 trailing_stop_pct: float = 0.02,   # trailing 2% จาก peak (0 = ปิด)
-                 min_confidence:    float = 0.50):
+                 max_position_pct:  float = 0.10,
+                 max_daily_loss:    float = 0.05,
+                 stop_loss_pct:     float = 0.03,
+                 take_profit_pct:   float = 0.05,
+                 trailing_stop_pct: float = 0.02,
+                 min_confidence:    float = 0.50,
+                 sizer:             Optional[PositionSizer] = None):
         self.max_position_pct  = max_position_pct
         self.max_daily_loss    = max_daily_loss
         self.stop_loss_pct     = stop_loss_pct
@@ -43,15 +44,28 @@ class RiskManager:
         self.trailing_stop_pct = trailing_stop_pct
         self.min_confidence    = min_confidence
 
+        # default sizer = fixed mode ด้วย max_position_pct เดียวกัน
+        self.sizer = sizer or PositionSizer(
+            mode             = "fixed",
+            max_position_pct = max_position_pct,
+        )
+
         self.daily_loss      = 0.0   # ขาดทุนสะสมวันนี้
         self.open_positions  = {}    # symbol → entry_price
         self.highest_prices  = {}    # symbol → highest price seen (สำหรับ trailing)
 
     # ========== Position sizing / stop-loss price ==========
 
-    def calc_position_size(self, balance_thb: float) -> float:
-        """คำนวณขนาด position ที่เหมาะสม"""
-        return round(balance_thb * self.max_position_pct, 2)
+    def calc_position_size(self, balance_thb: float,
+                           price: float = 0,
+                           atr: Optional[float] = None,
+                           stats: Optional[dict] = None) -> float:
+        """
+        คำนวณขนาด position ผ่าน PositionSizer
+        (backward-compat: ถ้าเรียกแบบเดิมด้วย arg เดียว → ใช้ fixed mode)
+        """
+        result = self.sizer.size(balance_thb, price=price, atr=atr, stats=stats)
+        return result.size_thb
 
     def calc_stop_loss(self, entry_price: float,
                        side: Literal["buy", "sell"]) -> float:
@@ -72,9 +86,14 @@ class RiskManager:
                 action:        Literal["buy", "sell"],
                 confidence:    float,
                 balance_thb:   float,
-                current_price: float) -> RiskAssessment:
+                current_price: float,
+                atr:           Optional[float] = None,
+                stats:         Optional[dict] = None) -> RiskAssessment:
         """
         ตรวจสอบว่าควรเทรดหรือไม่
+
+        atr / stats เป็น optional — ส่งมาเพื่อให้ PositionSizer ใช้ได้
+        เมื่อใช้ mode "atr"/"kelly"/"hybrid"
         """
         # 1. confidence ต่ำเกินไป
         if confidence < self.min_confidence:
@@ -92,11 +111,14 @@ class RiskManager:
             return RiskAssessment(False,
                 f"มี open position ของ {symbol} อยู่แล้ว", 0)
 
-        # 4. balance น้อยเกินไป
-        position_size = self.calc_position_size(balance_thb)
-        if position_size < 20:
+        # 4. คำนวณขนาด position ผ่าน PositionSizer (รองรับ fixed/kelly/atr/hybrid)
+        sizing = self.sizer.size(balance_thb,
+                                 price=current_price, atr=atr, stats=stats)
+        if sizing.size_thb < 20:   # Bitkub minimum
             return RiskAssessment(False,
-                f"balance {balance_thb:.2f} THB น้อยเกินไป", 0)
+                f"position {sizing.size_thb:.2f} THB ต่ำกว่า minimum "
+                f"(mode={sizing.mode_used})", 0,
+                sizing_info=sizing)
 
         # ผ่านทุกเงื่อนไข — เปิด position ใหม่
         if action == "buy":
@@ -106,7 +128,10 @@ class RiskManager:
         sl_price = self.calc_stop_loss(current_price, action)
         tp_price = self.calc_take_profit(current_price)
         return RiskAssessment(True,
-            f"approved | SL={sl_price:,} TP={tp_price:,}", position_size)
+            f"approved [{sizing.mode_used}] | SL={sl_price:,} TP={tp_price:,} "
+            f"| {sizing.reason}",
+            sizing.size_thb,
+            sizing_info=sizing)
 
     # ========== Exit logic (TP / Trailing / SL) ==========
 
