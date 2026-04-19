@@ -1,47 +1,127 @@
-import requests
+"""
+LINE Messaging API Notifier
+────────────────────────────
+ส่งแจ้งเตือนผ่าน LINE Messaging API (Push Message)
+พร้อม retry logic, error handling, และ fallback log
+
+Docs: https://developers.line.biz/en/reference/messaging-api/#send-push-message
+"""
 import os
-from dotenv import load_dotenv
+import time
+import requests
 from datetime import datetime
+from dotenv import load_dotenv
 
 load_dotenv()
 
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
-LINE_TARGET_ID = os.getenv("LINE_TARGET_ID", "") 
+LINE_TARGET_ID            = os.getenv("LINE_TARGET_ID", "")
+
+LINE_API_URL   = "https://api.line.me/v2/bot/message/push"
+MAX_MSG_LENGTH = 5000    # LINE text message limit
+MAX_RETRIES    = 3
+FALLBACK_LOG   = "logs/notifications_failed.log"
+
+
+def _log_fallback(message: str, reason: str) -> None:
+    """บันทึกข้อความที่ส่งไม่สำเร็จลง log file"""
+    os.makedirs("logs", exist_ok=True)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(FALLBACK_LOG, "a", encoding="utf-8") as f:
+        f.write(f"[{ts}] FAILED ({reason})\n{message}\n{'-'*50}\n")
+
 
 def send_line(message: str) -> bool:
-    """ส่งแจ้งเตือนผ่าน LINE Messaging API (Push Message)"""
+    """
+    ส่งแจ้งเตือนผ่าน LINE Messaging API (Push Message)
+
+    Returns:
+        True  — ส่งสำเร็จ
+        False — ส่งไม่สำเร็จ (เก็บลง fallback log แล้ว)
+    """
+    # ตรวจสอบ config
     if not LINE_CHANNEL_ACCESS_TOKEN or not LINE_TARGET_ID:
-        print(f"🚫 [NOTIFY] ขาด LINE_CHANNEL_ACCESS_TOKEN หรือ LINE_TARGET_ID\nข้อความ: {message}")
+        print(f"🚫 [NOTIFY] ขาด LINE_CHANNEL_ACCESS_TOKEN หรือ LINE_TARGET_ID")
+        print(f"   ข้อความ: {message}")
+        _log_fallback(message, "missing_credentials")
         return False
 
-    url = "https://api.line.me/v2/bot/message/push"
+    # ตรวจสอบความยาว (LINE จำกัด 5000 ตัวอักษร)
+    if len(message) > MAX_MSG_LENGTH:
+        print(f"⚠️  [NOTIFY] ข้อความยาวเกิน {MAX_MSG_LENGTH} ตัวอักษร — ตัดท้าย")
+        message = message[: MAX_MSG_LENGTH - 3] + "..."
+
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
+        "Content-Type":  "application/json",
+        "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}",
     }
-    
     payload = {
         "to": LINE_TARGET_ID,
-        "messages": [
-            {
-                "type": "text",
-                "text": message
-            }
-        ]
+        "messages": [{"type": "text", "text": message}],
     }
 
-    try:
-        r = requests.post(url, headers=headers, json=payload, timeout=5)
-        r.raise_for_status()
-        return True
-    except requests.exceptions.RequestException as e:
-        print(f"🚫 [NOTIFY] แจ้งเตือนล้มเหลว: {e}")
-        if hasattr(e, 'response') and e.response is not None:
-             print(f"ℹ️ สาเหตุ: {e.response.text}")
-        return False
+    # Retry with exponential backoff: 1s, 2s, 4s
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            r = requests.post(LINE_API_URL, headers=headers,
+                              json=payload, timeout=10)
 
-def notify_buy(symbol: str, price: float, amount_thb: float, confidence: float):
-    send_line(
+            # สำเร็จ
+            if r.status_code == 200:
+                return True
+
+            # จัดการ error codes
+            err_body = r.text[:200]
+            if r.status_code == 401:
+                print(f"🚫 [NOTIFY] 401 Unauthorized — LINE_CHANNEL_ACCESS_TOKEN หมดอายุหรือผิด")
+                _log_fallback(message, "invalid_token")
+                return False    # ไม่ retry — token ผิด
+
+            if r.status_code == 403:
+                print(f"🚫 [NOTIFY] 403 Forbidden — ไม่มีสิทธิ์ส่งให้ LINE_TARGET_ID={LINE_TARGET_ID}")
+                _log_fallback(message, "forbidden")
+                return False    # ไม่ retry
+
+            if r.status_code == 429:
+                # Rate limit — รอแล้วลองใหม่
+                wait = 2 ** attempt
+                print(f"⏳ [NOTIFY] 429 Rate Limit — รอ {wait}s แล้วลองใหม่ (ครั้งที่ {attempt})")
+                time.sleep(wait)
+                continue
+
+            # 4xx/5xx อื่น ๆ
+            print(f"⚠️  [NOTIFY] HTTP {r.status_code}: {err_body}")
+            if attempt < MAX_RETRIES:
+                time.sleep(2 ** attempt)
+                continue
+
+            _log_fallback(message, f"http_{r.status_code}")
+            return False
+
+        except requests.exceptions.Timeout:
+            print(f"⏱️  [NOTIFY] timeout (ครั้งที่ {attempt}/{MAX_RETRIES})")
+            if attempt < MAX_RETRIES:
+                time.sleep(2 ** attempt)
+                continue
+            _log_fallback(message, "timeout")
+            return False
+
+        except requests.exceptions.RequestException as e:
+            print(f"🚫 [NOTIFY] RequestException: {e}")
+            if attempt < MAX_RETRIES:
+                time.sleep(2 ** attempt)
+                continue
+            _log_fallback(message, f"request_error: {e}")
+            return False
+
+    return False
+
+
+# ========== Notification Templates ==========
+
+def notify_buy(symbol: str, price: float,
+               amount_thb: float, confidence: float) -> bool:
+    return send_line(
         f"🟢 𝗕𝗨𝗬 : {symbol}\n"
         f"───────────────\n"
         f"💵 ราคา   : {price:,.2f} ฿\n"
@@ -50,12 +130,13 @@ def notify_buy(symbol: str, price: float, amount_thb: float, confidence: float):
         f"⏱️ เวลา   : {datetime.now().strftime('%H:%M:%S')}"
     )
 
-def notify_sell(symbol: str, price: float, pnl: float, win_rate: float):
-    # เปลี่ยนไอคอนและข้อความตามกำไร/ขาดทุน
+
+def notify_sell(symbol: str, price: float,
+                pnl: float, win_rate: float) -> bool:
     pnl_icon = "📈 กำไร" if pnl >= 0 else "📉 ขาดทุน"
-    sign = "+" if pnl >= 0 else ""
-    
-    send_line(
+    sign     = "+" if pnl >= 0 else ""
+
+    return send_line(
         f"🔴 𝗦𝗘𝗟𝗟 : {symbol}\n"
         f"───────────────\n"
         f"💵 ราคา  : {price:,.2f} ฿\n"
@@ -64,8 +145,10 @@ def notify_sell(symbol: str, price: float, pnl: float, win_rate: float):
         f"⏱️ เวลา  : {datetime.now().strftime('%H:%M:%S')}"
     )
 
-def notify_stop_loss(symbol: str, entry: float, current: float, loss_thb: float):
-    send_line(
+
+def notify_stop_loss(symbol: str, entry: float,
+                     current: float, loss_thb: float) -> bool:
+    return send_line(
         f"⚠️ 𝗦𝗧𝗢𝗣-𝗟𝗢𝗦𝗦 : {symbol}\n"
         f"───────────────\n"
         f"🛒 ซื้อที่    : {entry:,.2f} ฿\n"
@@ -74,19 +157,20 @@ def notify_stop_loss(symbol: str, entry: float, current: float, loss_thb: float)
         f"⏱️ เวลา    : {datetime.now().strftime('%H:%M:%S')}"
     )
 
-def notify_error(error: str):
-    send_line(
+
+def notify_error(error: str) -> bool:
+    return send_line(
         f"❌ 𝗘𝗥𝗥𝗢𝗥 𝗔𝗟𝗘𝗥𝗧\n"
         f"───────────────\n"
         f"💬 {error}\n"
         f"⏱️ {datetime.now().strftime('%H:%M:%S')}"
     )
 
-def notify_summary(summary: dict):
-    # ปรับสีกำไร/ขาดทุนรวม
-    pnl_icon = "🟢" if summary['total_pnl'] >= 0 else "🔴"
-    
-    send_line(
+
+def notify_summary(summary: dict) -> bool:
+    pnl_icon = "🟢" if summary["total_pnl"] >= 0 else "🔴"
+
+    return send_line(
         f"📊 𝗗𝗔𝗜𝗟𝗬 𝗦𝗨𝗠𝗠𝗔𝗥𝗬\n"
         f"───────────────\n"
         f"🔄 เทรด    : {summary['total_trades']} ครั้ง\n"
@@ -94,3 +178,15 @@ def notify_summary(summary: dict):
         f"{pnl_icon} P&L     : {summary['total_pnl']:+.2f} ฿\n"
         f"📅 เวลา    : {datetime.now().strftime('%d/%m %H:%M')}"
     )
+
+
+# ========== Quick test ==========
+
+if __name__ == "__main__":
+    print("ทดสอบส่งข้อความผ่าน LINE Messaging API...")
+    ok = send_line(
+        f"🤖 Trade Me Plz — Test Notification\n"
+        f"───────────────\n"
+        f"⏱️ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+    print("✅ สำเร็จ" if ok else "❌ ล้มเหลว (ดู logs/notifications_failed.log)")
