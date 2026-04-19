@@ -1,0 +1,3 @@
+time,iso,symbol,action,price,amount_thb,amount_crypto,fee,pnl,reason
+1775284119,2026-04-04T13:28:39,BTC_THB,buy,1257887.31,10000.00,0.00792996,25.0000,0.00,"rsi=buy, bb=buy, macd=sell, ma=buy"
+1776580119,2026-04-19T13:28:39,BTC_THB,sell,1566383.04,12421.36,0.00792996,31.0534,2390.31,end-of-test
