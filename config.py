@@ -19,6 +19,18 @@ LINE_TARGET_ID            = os.getenv("LINE_TARGET_ID", "")
 SYMBOLS    = ["BTC_THB", "ETH_THB", "XRP_THB"]  # coin ที่ต้องการเทรด
 RESOLUTION = "60"                                 # timeframe หลัก: 1, 5, 15, 60, 240
 
+# ========== Market Regime Detection ==========
+# ตรวจ regime (trending/ranging/volatile) แล้วเลือก strategy ให้ตรง
+REGIME_ENABLED            = True
+# regime → block buy หรือไม่ (bot long-only)
+REGIME_BLOCK_BEAR         = True    # trending_bear → no buys
+REGIME_BLOCK_VOLATILE     = False   # volatile → ลดขนาดแทน (ไม่ block)
+# Thresholds
+REGIME_VOLATILE_ATR_PCT   = 5.0     # ATR > 5% ของ price = volatile
+REGIME_STRONG_TREND_ADX   = 25.0    # ADX ≥ 25 = มี trend
+REGIME_WEAK_TREND_ADX     = 20.0    # ADX < 20 = sideways
+REGIME_BB_SQUEEZE_PCT     = 3.0     # BB width < 3% = squeeze (ใน ranging)
+
 # ========== Multi-Timeframe ==========
 # ใช้ timeframe ใหญ่กว่า confirm ก่อนเข้า entry (เช่น เข้า 1H ต้องให้ 4H agree)
 MTF_ENABLED            = True
