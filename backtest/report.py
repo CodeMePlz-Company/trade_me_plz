@@ -40,7 +40,10 @@ def format_text_report(metrics: dict) -> str:
         f"  Avg loss        : {metrics['avg_loss']:>15,.2f} THB",
         f"  Best trade      : {metrics['best_trade']:>15,.2f} THB",
         f"  Worst trade     : {metrics['worst_trade']:>15,.2f} THB",
-        f"  Stop-loss hits  : {metrics['stop_loss_hits']:>15,}",
+        "-" * 55,
+        f"  🎯 Take-profit  : {metrics['take_profit_hits']:>15,}",
+        f"  🔒 Trailing stop: {metrics['trailing_stop_hits']:>15,}",
+        f"  ⚠️  Stop-loss   : {metrics['stop_loss_hits']:>15,}",
         f"  Total fees paid : {metrics['total_fees']:>15,.2f} THB",
         "=" * 55,
     ]
@@ -188,7 +191,9 @@ td.num {{ text-align: right; font-variant-numeric: tabular-nums; }}
     <tr><td>Worst trade</td><td class="num negative">{_fmt(metrics['worst_trade'])} THB</td></tr>
     <tr><td>Expectancy / trade</td><td class="num">{_fmt(metrics['expectancy'])} THB</td></tr>
     <tr><td>Total fees</td><td class="num">{_fmt(metrics['total_fees'])} THB</td></tr>
-    <tr><td>Stop-loss hits</td><td class="num">{metrics['stop_loss_hits']:,}</td></tr>
+    <tr><td>🎯 Take-profit hits</td><td class="num positive">{metrics['take_profit_hits']:,}</td></tr>
+    <tr><td>🔒 Trailing stop hits</td><td class="num">{metrics['trailing_stop_hits']:,}</td></tr>
+    <tr><td>⚠️ Stop-loss hits</td><td class="num negative">{metrics['stop_loss_hits']:,}</td></tr>
     <tr><td>Wins / Losses</td><td class="num">{metrics['wins']} / {metrics['losses']}</td></tr>
   </tbody>
 </table>

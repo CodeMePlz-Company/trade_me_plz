@@ -54,7 +54,12 @@ def main():
     p.add_argument("--no-cache", action="store_true",
                    help="ข้าม cache และ fetch ใหม่เสมอ")
     p.add_argument("--verbose", "-v", action="store_true")
-    p.add_argument("--stop-loss", type=float, default=0.03)
+    p.add_argument("--stop-loss", type=float, default=0.03,
+                   help="Hard stop-loss เป็นสัดส่วน (0.03 = 3%)")
+    p.add_argument("--take-profit", type=float, default=0.05,
+                   help="Take-profit เป็นสัดส่วน (0.05 = 5%, 0=ปิด)")
+    p.add_argument("--trailing-stop", type=float, default=0.02,
+                   help="Trailing stop เป็นสัดส่วน (0.02 = 2% จาก peak, 0=ปิด)")
     p.add_argument("--min-confidence", type=float, default=0.50)
     p.add_argument("--max-position-pct", type=float, default=0.10)
     args = p.parse_args()
@@ -76,10 +81,12 @@ def main():
 
     # ----- 2. รัน engine -----
     engine = BacktestEngine(
-        starting_cash    = args.cash,
-        max_position_pct = args.max_position_pct,
-        stop_loss_pct    = args.stop_loss,
-        min_confidence   = args.min_confidence,
+        starting_cash     = args.cash,
+        max_position_pct  = args.max_position_pct,
+        stop_loss_pct     = args.stop_loss,
+        take_profit_pct   = args.take_profit,
+        trailing_stop_pct = args.trailing_stop,
+        min_confidence    = args.min_confidence,
     )
     print(f"[ENGINE] เริ่มรัน backtest...")
     result = engine.run(candles, symbol=args.symbol, verbose=args.verbose)

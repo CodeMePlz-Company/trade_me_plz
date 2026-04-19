@@ -47,6 +47,7 @@ class Position:
     amount_crypto: float
     amount_thb:    float  # ต้นทุนที่จ่ายรวมค่าธรรมเนียม
     entry_time:    int
+    peak_price:    float = 0.0   # peak price ตั้งแต่เปิด position (สำหรับ trailing)
 
 
 @dataclass
@@ -57,8 +58,10 @@ class BacktestResult:
     end_equity:   float       # cash + mark-to-market ณ bar สุดท้าย
     trades:       list[Trade] = field(default_factory=list)
     equity_curve: list[tuple[int, float]] = field(default_factory=list)   # (time, equity)
-    stop_loss_hits: int = 0
-    rejected_signals: int = 0
+    stop_loss_hits:     int = 0
+    take_profit_hits:   int = 0
+    trailing_stop_hits: int = 0
+    rejected_signals:   int = 0
 
 
 # ========== Simulated Portfolio ==========
@@ -71,8 +74,10 @@ class SimPortfolio:
         self.positions: dict[str, Position] = {}
         self.trades:    list[Trade] = []
         self.equity_history: list[tuple[int, float]] = []
-        self.stop_loss_hits = 0
-        self.rejected       = 0
+        self.stop_loss_hits     = 0
+        self.take_profit_hits   = 0
+        self.trailing_stop_hits = 0
+        self.rejected           = 0
 
     # ---------- Actions ----------
 
@@ -94,6 +99,7 @@ class SimPortfolio:
             amount_crypto = amount_crypto,
             amount_thb    = amount_thb,
             entry_time    = ts,
+            peak_price    = price,    # seed peak = entry
         )
 
         trade = Trade(
@@ -219,19 +225,54 @@ class BacktestEngine:
     """
     Engine หลักสำหรับรัน backtest symbol เดียว
     ใช้ parameter เดียวกับ config.py ของ production
+
+    Exit priority (ดู execution/risk_manager.check_exit):
+        take-profit > trailing-stop > stop-loss
     """
 
     def __init__(self,
-                 starting_cash:    float = 100_000,
-                 max_position_pct: float = 0.10,
-                 stop_loss_pct:    float = 0.03,
-                 min_confidence:   float = 0.50,
-                 max_daily_loss:   float = 0.05):
-        self.starting_cash    = starting_cash
-        self.max_position_pct = max_position_pct
-        self.stop_loss_pct    = stop_loss_pct
-        self.min_confidence   = min_confidence
-        self.max_daily_loss   = max_daily_loss
+                 starting_cash:     float = 100_000,
+                 max_position_pct:  float = 0.10,
+                 stop_loss_pct:     float = 0.03,
+                 take_profit_pct:   float = 0.05,
+                 trailing_stop_pct: float = 0.02,
+                 min_confidence:    float = 0.50,
+                 max_daily_loss:    float = 0.05):
+        self.starting_cash     = starting_cash
+        self.max_position_pct  = max_position_pct
+        self.stop_loss_pct     = stop_loss_pct
+        self.take_profit_pct   = take_profit_pct
+        self.trailing_stop_pct = trailing_stop_pct
+        self.min_confidence    = min_confidence
+        self.max_daily_loss    = max_daily_loss
+
+    def _check_exit(self, pos: Position,
+                    price: float) -> tuple[bool, str]:
+        """
+        เช็ค exit priority: take-profit > trailing-stop > stop-loss
+        คืน (should_exit, reason)
+        """
+        entry = pos.entry_price
+        peak  = pos.peak_price
+
+        # 1. take-profit
+        if self.take_profit_pct > 0:
+            gain_pct = (price - entry) / entry
+            if gain_pct >= self.take_profit_pct:
+                return True, "take-profit"
+
+        # 2. trailing-stop — ใช้ได้เฉพาะเมื่อ peak > entry
+        if self.trailing_stop_pct > 0 and peak > entry:
+            drop_from_peak = (peak - price) / peak
+            if drop_from_peak >= self.trailing_stop_pct:
+                return True, "trailing-stop"
+
+        # 3. stop-loss
+        loss_pct = (entry - price) / entry
+        if loss_pct >= self.stop_loss_pct:
+            return True, "stop-loss"
+
+        return False, ""
 
     def run(self,
             candles: list[dict],
@@ -254,19 +295,32 @@ class BacktestEngine:
                 day_loss = 0.0
                 day_anchor = ts
 
-            # ----- 1. check stop-loss บน open position -----
+            # ----- 1. update peak + check exit (TP / trailing / SL) -----
             if symbol in portfolio.positions:
-                pos     = portfolio.positions[symbol]
-                loss_pct = (pos.entry_price - price) / pos.entry_price
-                if loss_pct >= self.stop_loss_pct:
-                    trade = portfolio.sell(symbol, price, ts,
-                                           reason="stop-loss")
-                    portfolio.stop_loss_hits += 1
+                pos = portfolio.positions[symbol]
+
+                # ใช้ high ของ bar ถ้ามี เพื่อ model trailing stop ได้แม่นขึ้น
+                bar_high = bar.get("high", price)
+                if bar_high > pos.peak_price:
+                    pos.peak_price = bar_high
+
+                should_exit, reason = self._check_exit(pos, price)
+                if should_exit:
+                    trade = portfolio.sell(symbol, price, ts, reason=reason)
+                    if reason == "stop-loss":
+                        portfolio.stop_loss_hits += 1
+                    elif reason == "take-profit":
+                        portfolio.take_profit_hits += 1
+                    elif reason == "trailing-stop":
+                        portfolio.trailing_stop_hits += 1
+
                     if trade and trade.pnl < 0:
                         day_loss += abs(trade.pnl)
                     if verbose:
-                        print(f"  [{i}] STOP-LOSS {symbol} @ {price:,.2f} "
-                              f"loss={loss_pct:.2%} pnl={trade.pnl:+.2f}")
+                        print(f"  [{i}] {reason.upper()} {symbol} @ {price:,.2f} "
+                              f"entry={pos.entry_price:,.0f} "
+                              f"peak={pos.peak_price:,.0f} "
+                              f"pnl={trade.pnl:+.2f}")
 
             # ----- 2. ต้องมี warmup พอ -----
             if i < MIN_WARMUP:
@@ -318,12 +372,14 @@ class BacktestEngine:
                       if portfolio.equity_history else portfolio.cash)
 
         return BacktestResult(
-            symbol         = symbol,
-            start_cash     = self.starting_cash,
-            end_cash       = portfolio.cash,
-            end_equity     = end_equity,
-            trades         = portfolio.trades,
-            equity_curve   = portfolio.equity_history,
-            stop_loss_hits = portfolio.stop_loss_hits,
-            rejected_signals = portfolio.rejected,
+            symbol             = symbol,
+            start_cash         = self.starting_cash,
+            end_cash           = portfolio.cash,
+            end_equity         = end_equity,
+            trades             = portfolio.trades,
+            equity_curve       = portfolio.equity_history,
+            stop_loss_hits     = portfolio.stop_loss_hits,
+            take_profit_hits   = portfolio.take_profit_hits,
+            trailing_stop_hits = portfolio.trailing_stop_hits,
+            rejected_signals   = portfolio.rejected,
         )

@@ -155,6 +155,8 @@ def compute_metrics(result, bars_per_year: int = 24 * 365) -> dict:
         "expectancy":         round(expectancy, 2),
         "total_fees":         round(total_fees, 2),
         "stop_loss_hits":     result.stop_loss_hits,
+        "take_profit_hits":   result.take_profit_hits,
+        "trailing_stop_hits": result.trailing_stop_hits,
         "best_trade":         round(max((t.pnl for t in sells), default=0), 2),
         "worst_trade":        round(min((t.pnl for t in sells), default=0), 2),
     }

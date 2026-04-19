@@ -158,6 +158,34 @@ def notify_stop_loss(symbol: str, entry: float,
     )
 
 
+def notify_take_profit(symbol: str, entry: float,
+                       current: float, profit_thb: float) -> bool:
+    gain_pct = (current - entry) / entry * 100 if entry else 0
+    return send_line(
+        f"🎯 𝗧𝗔𝗞𝗘-𝗣𝗥𝗢𝗙𝗜𝗧 : {symbol}\n"
+        f"───────────────\n"
+        f"🛒 ซื้อที่    : {entry:,.2f} ฿\n"
+        f"🚀 ขายที่   : {current:,.2f} ฿  (+{gain_pct:.2f}%)\n"
+        f"💰 กำไร    : +{profit_thb:,.2f} ฿\n"
+        f"⏱️ เวลา    : {datetime.now().strftime('%H:%M:%S')}"
+    )
+
+
+def notify_trailing_stop(symbol: str, entry: float, peak: float,
+                         current: float, pnl_thb: float) -> bool:
+    sign = "+" if pnl_thb >= 0 else ""
+    drop = (peak - current) / peak * 100 if peak else 0
+    return send_line(
+        f"🔒 𝗧𝗥𝗔𝗜𝗟𝗜𝗡𝗚 𝗦𝗧𝗢𝗣 : {symbol}\n"
+        f"───────────────\n"
+        f"🛒 ซื้อที่    : {entry:,.2f} ฿\n"
+        f"⛰️ Peak     : {peak:,.2f} ฿\n"
+        f"📉 ปัจจุบัน  : {current:,.2f} ฿  (-{drop:.2f}% จาก peak)\n"
+        f"💵 P&L     : {sign}{pnl_thb:,.2f} ฿\n"
+        f"⏱️ เวลา    : {datetime.now().strftime('%H:%M:%S')}"
+    )
+
+
 def notify_error(error: str) -> bool:
     return send_line(
         f"❌ 𝗘𝗥𝗥𝗢𝗥 𝗔𝗟𝗘𝗥𝗧\n"

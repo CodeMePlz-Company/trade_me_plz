@@ -25,9 +25,12 @@ MIN_CONFIDENCE  = 0.50         # confidence ขั้นต่ำ
 MIN_SPREAD_PCT  = 0.30         # spread ขั้นต่ำสำหรับ arbitrage
 
 # ========== Risk ==========
-MAX_POSITION_PCT = 0.10   # ใช้เงินไม่เกิน 10% ต่อ order
-MAX_DAILY_LOSS   = 0.05   # หยุดเทรดถ้าขาดทุนเกิน 5% ต่อวัน
-STOP_LOSS_PCT    = 0.03   # stop-loss 3%
+MAX_POSITION_PCT  = 0.10   # ใช้เงินไม่เกิน 10% ต่อ order
+MAX_DAILY_LOSS    = 0.05   # หยุดเทรดถ้าขาดทุนเกิน 5% ต่อวัน
+STOP_LOSS_PCT     = 0.03   # hard stop-loss 3% (ออกทันทีถ้าราคาตก)
+TAKE_PROFIT_PCT   = 0.05   # take-profit 5% (ออกทันทีถ้าราคาขึ้นถึง target)
+TRAILING_STOP_PCT = 0.02   # trailing stop 2% จาก peak (0 = ปิดใช้งาน)
+                           # ใช้ได้เฉพาะเมื่อราคาผ่านจุด breakeven ไปแล้ว
 
 # ========== Loop ==========
 SCAN_INTERVAL_SEC   = 60    # สแกนทุก 60 วินาที

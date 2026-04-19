@@ -174,3 +174,147 @@ class TestClosePosition:
         # ต้องไม่ throw exception
         risk.close_position("DOGE_THB")
         assert risk.open_positions == {}
+
+    def test_close_also_clears_peak_tracking(self, risk):
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_100_000
+        risk.close_position("BTC_THB")
+        assert "BTC_THB" not in risk.highest_prices
+
+
+# ========== Take Profit ==========
+
+class TestTakeProfit:
+    def test_triggers_at_exact_target(self, risk):
+        # take_profit_pct default = 0.05 (5%)
+        risk = RiskManager(take_profit_pct=0.05)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        # ราคาขึ้น 5% พอดี → trigger
+        assert risk.should_take_profit("BTC_THB", 1_050_000) is True
+
+    def test_does_not_trigger_below_target(self, risk):
+        risk = RiskManager(take_profit_pct=0.05)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        # ขึ้น 4% < 5%
+        assert risk.should_take_profit("BTC_THB", 1_040_000) is False
+
+    def test_no_trigger_when_position_closed(self, risk):
+        risk = RiskManager(take_profit_pct=0.05)
+        assert risk.should_take_profit("BTC_THB", 1_500_000) is False
+
+    def test_disabled_when_pct_is_zero(self):
+        risk = RiskManager(take_profit_pct=0)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        # ราคาขึ้น 50% — ถ้า disabled ต้องไม่ trigger
+        assert risk.should_take_profit("BTC_THB", 1_500_000) is False
+
+
+# ========== Trailing Stop ==========
+
+class TestTrailingStop:
+    def test_update_peak_tracks_highest(self):
+        risk = RiskManager(trailing_stop_pct=0.02)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_000_000
+
+        risk.update_peak("BTC_THB", 1_050_000)
+        assert risk.highest_prices["BTC_THB"] == 1_050_000
+
+        # ราคาต่ำกว่า peak — peak ไม่ควรลด
+        risk.update_peak("BTC_THB", 1_020_000)
+        assert risk.highest_prices["BTC_THB"] == 1_050_000
+
+    def test_no_trigger_when_price_never_went_above_entry(self):
+        """trailing stop ไม่ควรทำงานถ้าราคายังไม่เคยผ่าน entry"""
+        risk = RiskManager(trailing_stop_pct=0.02)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_000_000    # peak == entry
+        # ราคาตก 5% — ไม่ควร trigger trailing (ใช้ hard stop-loss แทน)
+        assert risk.should_trailing_stop("BTC_THB", 950_000) is False
+
+    def test_triggers_when_price_drops_from_peak(self):
+        risk = RiskManager(trailing_stop_pct=0.02)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_100_000    # peak 10% กำไร
+
+        # ราคาตกจาก peak 2.5% (> 2%)
+        assert risk.should_trailing_stop("BTC_THB", 1_072_500) is True
+
+    def test_does_not_trigger_when_drop_smaller_than_pct(self):
+        risk = RiskManager(trailing_stop_pct=0.02)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_100_000
+
+        # ตกจาก peak แค่ 1% < 2%
+        assert risk.should_trailing_stop("BTC_THB", 1_089_000) is False
+
+    def test_disabled_when_pct_is_zero(self):
+        risk = RiskManager(trailing_stop_pct=0)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_100_000
+        assert risk.should_trailing_stop("BTC_THB", 1_050_000) is False
+
+
+# ========== check_exit (priority) ==========
+
+class TestCheckExit:
+    def test_no_open_position_returns_false(self):
+        risk = RiskManager()
+        decision = risk.check_exit("BTC_THB", 1_000_000)
+        assert decision.should_exit is False
+        assert decision.reason == ""
+
+    def test_take_profit_has_highest_priority(self):
+        """ถ้าราคาทั้ง TP ถึง + อยู่ในโซน trailing → ต้องเลือก TP ก่อน"""
+        risk = RiskManager(take_profit_pct=0.05,
+                           trailing_stop_pct=0.02, stop_loss_pct=0.03)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_200_000
+
+        # ราคา 1,050,000 = +5% (TP hit) + ก็ยังตกจาก peak 12.5%
+        decision = risk.check_exit("BTC_THB", 1_050_000)
+        assert decision.should_exit is True
+        assert decision.reason == "take-profit"
+
+    def test_trailing_beats_stop_loss_when_both_apply(self):
+        """ถ้า trailing + SL ทริกเกอร์พร้อมกัน เลือก trailing ก่อน"""
+        risk = RiskManager(take_profit_pct=0.10,
+                           trailing_stop_pct=0.02, stop_loss_pct=0.03)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_050_000   # peak +5%
+
+        # ราคา 950,000: trailing = (1050-950)/1050 = 9.5% > 2%
+        # SL       = (1000-950)/1000 = 5% > 3%
+        decision = risk.check_exit("BTC_THB", 950_000)
+        assert decision.should_exit is True
+        assert decision.reason == "trailing-stop"
+
+    def test_stop_loss_when_price_never_went_up(self):
+        """ราคาไม่เคยขึ้นเลย → ใช้ stop-loss"""
+        risk = RiskManager(take_profit_pct=0.05,
+                           trailing_stop_pct=0.02, stop_loss_pct=0.03)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_000_000
+
+        decision = risk.check_exit("BTC_THB", 965_000)   # -3.5%
+        assert decision.should_exit is True
+        assert decision.reason == "stop-loss"
+
+    def test_no_exit_when_in_safe_zone(self):
+        """ราคาลอยใน band ปลอดภัย → ไม่ออก"""
+        risk = RiskManager(take_profit_pct=0.05,
+                           trailing_stop_pct=0.02, stop_loss_pct=0.03)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_010_000
+
+        decision = risk.check_exit("BTC_THB", 1_005_000)
+        assert decision.should_exit is False
+
+    def test_check_exit_updates_peak(self):
+        """check_exit ต้อง update peak ให้ด้วย"""
+        risk = RiskManager(trailing_stop_pct=0.02)
+        risk.open_positions["BTC_THB"] = 1_000_000
+        risk.highest_prices["BTC_THB"] = 1_000_000
+
+        risk.check_exit("BTC_THB", 1_080_000)    # ควร update peak
+        assert risk.highest_prices["BTC_THB"] == 1_080_000

@@ -14,16 +14,19 @@ from execution.order_manager import (
 from execution.portfolio   import Portfolio
 from execution.notifier    import (
     notify_buy, notify_sell,
-    notify_stop_loss, notify_error, notify_summary
+    notify_stop_loss, notify_take_profit, notify_trailing_stop,
+    notify_error, notify_summary
 )
 
 # ========== Init ==========
 collector  = DataCollector(config.SYMBOLS)
 risk       = RiskManager(
-    max_position_pct = config.MAX_POSITION_PCT,
-    max_daily_loss   = config.MAX_DAILY_LOSS,
-    stop_loss_pct    = config.STOP_LOSS_PCT,
-    min_confidence   = config.MIN_CONFIDENCE,
+    max_position_pct  = config.MAX_POSITION_PCT,
+    max_daily_loss    = config.MAX_DAILY_LOSS,
+    stop_loss_pct     = config.STOP_LOSS_PCT,
+    take_profit_pct   = config.TAKE_PROFIT_PCT,
+    trailing_stop_pct = config.TRAILING_STOP_PCT,
+    min_confidence    = config.MIN_CONFIDENCE,
 )
 portfolio  = Portfolio()
 
@@ -143,8 +146,11 @@ def _handle_sell(signal):
             notify_error(f"SELL {signal.symbol} failed: {result}")
 
 
-def check_stop_loss():
-    """เช็ค stop-loss ทุก 10 วินาที"""
+def check_exits():
+    """
+    เช็ค exit conditions ทุก 10 วินาที
+    Priority: take-profit > trailing-stop > stop-loss
+    """
     for symbol in list(risk.open_positions.keys()):
         try:
             snap  = collector.get_snapshot(symbol)
@@ -152,30 +158,55 @@ def check_stop_loss():
             if not price:
                 continue
 
-            if risk.should_stop_loss(symbol, float(price)):
-                entry  = risk.open_positions[symbol]
-                loss   = (entry - float(price)) / entry * 100
-                print(f"  [STOP-LOSS] {symbol} @ {price} loss={loss:.1f}%")
+            price = float(price)
 
-                amount_crypto = get_crypto_balance(symbol)
-                if amount_crypto > 0:
-                    if not config.SIMULATION_MODE:
-                        place_sell_market(symbol, amount_crypto)
+            # ใช้ check_exit แทนการเช็คทีละเงื่อนไข
+            decision = risk.check_exit(symbol, price)
+            if not decision.should_exit:
+                continue
 
-                    balance = get_thb_balance()
-                    pnl = portfolio.record_sell(
-                        symbol        = symbol,
-                        price         = float(price),
-                        amount_crypto = amount_crypto,
-                        fee           = amount_crypto * float(price) * 0.0025,
-                        balance_after = balance,
-                    )
-                    risk.close_position(symbol)
+            reason = decision.reason
+            entry  = decision.entry_price
+            peak   = decision.peak_price
+
+            change_pct = (price - entry) / entry * 100
+            print(f"  [{reason.upper()}] {symbol} @ {price:,} "
+                  f"entry={entry:,} peak={peak:,} change={change_pct:+.2f}%")
+
+            amount_crypto = get_crypto_balance(symbol)
+            if amount_crypto <= 0:
+                risk.close_position(symbol)
+                continue
+
+            if not config.SIMULATION_MODE:
+                place_sell_market(symbol, amount_crypto)
+
+            balance = get_thb_balance()
+            pnl = portfolio.record_sell(
+                symbol        = symbol,
+                price         = price,
+                amount_crypto = amount_crypto,
+                fee           = amount_crypto * price * 0.0025,
+                balance_after = balance,
+            )
+            risk.close_position(symbol)
+
+            # ส่ง notification ตาม reason
+            if reason == "take-profit":
+                notify_take_profit(symbol, entry, price, pnl)
+            elif reason == "trailing-stop":
+                notify_trailing_stop(symbol, entry, peak, price, pnl)
+            else:    # stop-loss
+                notify_stop_loss(symbol, entry, price, abs(pnl))
+                if pnl < 0:
                     risk.record_loss(abs(pnl))
-                    notify_stop_loss(symbol, entry, float(price), abs(pnl))
 
         except Exception as e:
-            print(f"[ERROR] stop-loss check {symbol}: {e}")
+            print(f"[ERROR] exit check {symbol}: {e}")
+
+
+# เก็บ alias เดิมเพื่อ backward compat ถ้ามีโค้ดเรียก check_stop_loss
+check_stop_loss = check_exits
 
 
 def send_daily_summary():
@@ -190,7 +221,7 @@ def send_daily_summary():
 
 def start_scheduler():
     schedule.every(config.SCAN_INTERVAL_SEC).seconds.do(run_scan)
-    schedule.every(config.STOP_LOSS_CHECK_SEC).seconds.do(check_stop_loss)
+    schedule.every(config.STOP_LOSS_CHECK_SEC).seconds.do(check_exits)
     schedule.every().day.at(f"{config.SUMMARY_HOUR:02d}:00").do(send_daily_summary)
 
     while True:
