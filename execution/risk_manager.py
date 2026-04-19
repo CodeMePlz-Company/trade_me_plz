@@ -1,11 +1,14 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
+
+from execution.position_sizer import PositionSizer, SizingResult
 
 @dataclass
 class RiskAssessment:
     approved:      bool
     reason:        str
     position_size: float   # จำนวน THB ที่อนุมัติให้ใช้
+    sizing_info:   Optional[SizingResult] = None   # รายละเอียด sizing (สำหรับ log)
 
 
 @dataclass

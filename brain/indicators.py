@@ -78,6 +78,41 @@ def calc_bollinger(closes: list[float], period: int = 20, std_dev: float = 2.0) 
         })
     return result
 
+def calc_atr(highs:  list[float],
+             lows:   list[float],
+             closes: list[float],
+             period: int = 14) -> list[float]:
+    """
+    Average True Range — วัดความผันผวนสัมบูรณ์ (ในหน่วยราคา)
+    ใช้ Wilder's smoothing:
+        TR_i = max(high-low, |high-close_prev|, |low-close_prev|)
+        ATR  = smooth(TR, period)
+
+    ใช้สำหรับ ATR-based position sizing + dynamic stop-loss
+    """
+    n = len(closes)
+    if n < 2 or len(highs) != n or len(lows) != n:
+        return [None] * n
+
+    # True Range: index 0 ไม่มี close_prev → ใช้ high-low
+    tr = [highs[0] - lows[0]]
+    for i in range(1, n):
+        hl = highs[i] - lows[i]
+        hc = abs(highs[i] - closes[i - 1])
+        lc = abs(lows[i]  - closes[i - 1])
+        tr.append(max(hl, hc, lc))
+
+    # ATR: index < period → None; index == period → SMA; after → Wilder's
+    atr: list[float] = [None] * n
+    if n > period:
+        first_atr = sum(tr[1:period + 1]) / period
+        atr[period] = first_atr
+        for i in range(period + 1, n):
+            atr[i] = (atr[i - 1] * (period - 1) + tr[i]) / period
+
+    return atr
+
+
 def calc_macd(closes: list[float],
               fast: int = 12, slow: int = 26, signal: int = 9) -> list[dict]:
     """

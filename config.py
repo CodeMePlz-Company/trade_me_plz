@@ -25,12 +25,24 @@ MIN_CONFIDENCE  = 0.50         # confidence ขั้นต่ำ
 MIN_SPREAD_PCT  = 0.30         # spread ขั้นต่ำสำหรับ arbitrage
 
 # ========== Risk ==========
-MAX_POSITION_PCT  = 0.10   # ใช้เงินไม่เกิน 10% ต่อ order
+MAX_POSITION_PCT  = 0.10   # ใช้เงินไม่เกิน 10% ต่อ order (เพดาน — ทุกโหมดต้องไม่เกินนี้)
+MIN_POSITION_THB  = 20.0   # ขั้นต่ำที่ Bitkub รับ
 MAX_DAILY_LOSS    = 0.05   # หยุดเทรดถ้าขาดทุนเกิน 5% ต่อวัน
-STOP_LOSS_PCT     = 0.03   # hard stop-loss 3% (ออกทันทีถ้าราคาตก)
-TAKE_PROFIT_PCT   = 0.05   # take-profit 5% (ออกทันทีถ้าราคาขึ้นถึง target)
+STOP_LOSS_PCT     = 0.03   # hard stop-loss 3%
+TAKE_PROFIT_PCT   = 0.05   # take-profit 5%
 TRAILING_STOP_PCT = 0.02   # trailing stop 2% จาก peak (0 = ปิดใช้งาน)
-                           # ใช้ได้เฉพาะเมื่อราคาผ่านจุด breakeven ไปแล้ว
+
+# ========== Position Sizing ==========
+# โหมด: "fixed" / "kelly" / "atr" / "hybrid"
+POSITION_SIZING_MODE   = "fixed"
+
+# Kelly Criterion params (ใช้เมื่อ mode = kelly/hybrid)
+KELLY_FRACTION         = 0.25   # ใช้ 1/4 Kelly — conservative
+KELLY_MIN_TRADES       = 20     # ต้องมีประวัติ ≥ N trades ก่อนใช้ Kelly
+
+# ATR-based params (ใช้เมื่อ mode = atr/hybrid)
+ATR_RISK_PER_TRADE_PCT = 0.01   # เสี่ยง 1% ของ balance ต่อ trade
+ATR_STOP_MULTIPLIER    = 2.0    # stop-loss = entry − 2×ATR
 
 # ========== Loop ==========
 SCAN_INTERVAL_SEC   = 60    # สแกนทุก 60 วินาที
