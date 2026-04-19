@@ -1,7 +1,10 @@
 from brain.spread_scanner import scan_spreads, get_order_book_depth
 from brain.indicators import get_all_indicators
+from brain.multi_timeframe import confirm as mtf_confirm
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
+
+import config
 
 @dataclass
 class TradeSignal:
@@ -12,11 +15,17 @@ class TradeSignal:
     price:      float
 
 def strategy_indicator(symbol: str,
-                       resolution: str = "60") -> TradeSignal:
+                       resolution: str = "60",
+                       mtf_enabled: Optional[bool] = None) -> TradeSignal:
     """
-    กลยุทธ์ที่ 1 — Indicator-based
+    กลยุทธ์ที่ 1 — Indicator-based (+ optional multi-timeframe confirm)
     ซื้อเมื่อ indicators ส่วนใหญ่บอก buy
     ขายเมื่อ indicators ส่วนใหญ่บอก sell
+
+    Multi-timeframe:
+        ถ้า config.MTF_ENABLED — confirm signal กับ HTF (config.MTF_HIGHER_RESOLUTION)
+        - HTF oppose → signal เปลี่ยนเป็น "hold" (เลี่ยง whipsaw)
+        - HTF agree  → confidence +boost
     """
     ind = get_all_indicators(symbol, resolution)
     if not ind:
@@ -25,12 +34,46 @@ def strategy_indicator(symbol: str,
     consensus  = ind["consensus"]
     buy_count  = ind["buy_count"]
     sell_count = ind["sell_count"]
-    confidence = max(buy_count, sell_count) / 4  # 4 indicators
+    total_inds = len(ind["signals"])           # = 7 (rsi, bb, macd, ma, stoch, adx, vp)
+    confidence = max(buy_count, sell_count) / max(total_inds, 1)
+
+    # Sideways market (ADX < 20) → ลด confidence ลง 30%
+    if ind.get("is_sideways") and consensus != "neutral":
+        confidence *= 0.7
 
     reason_parts = []
     for name, sig in ind["signals"].items():
         if sig != "neutral":
             reason_parts.append(f"{name}={sig}")
+    if ind.get("adx") and ind["adx"].get("adx") is not None:
+        reason_parts.append(f"ADX={ind['adx']['adx']}")
+
+    # ---- Multi-timeframe confirmation ----
+    enabled = getattr(config, "MTF_ENABLED", False) \
+        if mtf_enabled is None else mtf_enabled
+
+    if enabled and consensus in ("buy", "sell"):
+        mtf = mtf_confirm(
+            symbol            = symbol,
+            lower_action      = consensus,
+            higher_resolution = getattr(config, "MTF_HIGHER_RESOLUTION", "240"),
+            mode              = getattr(config, "MTF_MODE", "lenient"),
+            boost             = getattr(config, "MTF_CONFIDENCE_BOOST", 0.15),
+            penalty           = getattr(config, "MTF_CONFIDENCE_PENALTY", 0.30),
+        )
+        if not mtf.allow:
+            # HTF oppose → ยกเลิก signal
+            return TradeSignal(
+                symbol     = symbol,
+                action     = "hold",
+                reason     = f"MTF-block: {mtf.reason}",
+                confidence = 0.0,
+                price      = ind["price"],
+            )
+        confidence = min(max(confidence + mtf.confidence_delta, 0.0), 1.0)
+        reason_parts.append(f"MTF={mtf.higher_consensus}@{mtf.higher_tf}"
+                            + (f" Δ{mtf.confidence_delta:+.2f}" if mtf.confidence_delta else ""))
+
     reason = ", ".join(reason_parts) if reason_parts else "neutral"
 
     return TradeSignal(

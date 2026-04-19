@@ -15,7 +15,9 @@ import pytest
 from unittest.mock import patch
 from brain.indicators import (
     calc_sma, calc_ema, calc_rsi,
-    calc_bollinger, calc_macd, get_all_indicators,
+    calc_bollinger, calc_macd, calc_atr,
+    calc_stochastic, calc_adx, calc_volume_profile,
+    get_all_indicators,
 )
 
 
@@ -166,7 +168,9 @@ class TestGetAllIndicators:
         assert result["symbol"] == "BTC_THB"
         assert "price" in result
         assert "signals" in result
-        assert set(result["signals"].keys()) == {"rsi", "bb", "macd", "ma"}
+        assert set(result["signals"].keys()) == {
+            "rsi", "bb", "macd", "ma", "stoch", "adx", "vp"
+        }
         assert result["consensus"] in ("buy", "sell", "neutral")
 
     def test_uptrend_gives_bullish_ma_signal(self):
@@ -176,8 +180,178 @@ class TestGetAllIndicators:
             result = get_all_indicators("BTC_THB")
         assert result["signals"]["ma"] == "buy"
 
-    def test_buy_count_plus_sell_count_leq_4(self):
+    def test_buy_count_plus_sell_count_leq_7(self):
         candles = self._fake_candles(100)
         with patch("brain.indicators.get_ohlcv", return_value=candles):
             result = get_all_indicators("BTC_THB")
-        assert result["buy_count"] + result["sell_count"] <= 4
+        assert result["buy_count"] + result["sell_count"] <= 7
+
+    def test_includes_extended_indicators(self):
+        candles = self._fake_candles(100)
+        with patch("brain.indicators.get_ohlcv", return_value=candles):
+            result = get_all_indicators("BTC_THB")
+        for key in ("atr", "stoch", "adx", "vp",
+                    "is_trending", "is_sideways"):
+            assert key in result
+
+
+# ========== ATR ==========
+
+class TestCalcATR:
+    def test_first_period_values_are_none(self):
+        n = 30
+        highs = [100 + i for i in range(n)]
+        lows  = [ 99 + i for i in range(n)]
+        closes = [ 99.5 + i for i in range(n)]
+        atr = calc_atr(highs, lows, closes, period=14)
+        assert all(v is None for v in atr[:14])
+        assert atr[14] is not None
+
+    def test_returns_positive_atr(self):
+        n = 30
+        highs = [100 + i for i in range(n)]
+        lows  = [ 99 + i for i in range(n)]
+        closes = [ 99.5 + i for i in range(n)]
+        atr = calc_atr(highs, lows, closes, period=14)
+        assert atr[-1] > 0
+
+    def test_insufficient_data_all_none(self):
+        atr = calc_atr([1, 2], [1, 2], [1, 2], period=14)
+        assert all(v is None for v in atr)
+
+    def test_mismatched_lengths_all_none(self):
+        atr = calc_atr([1, 2, 3], [1, 2], [1, 2, 3], period=14)
+        assert all(v is None for v in atr)
+
+    def test_higher_volatility_higher_atr(self):
+        n = 30
+        lowvol_h  = [100 + i * 0.1 for i in range(n)]
+        lowvol_l  = [ 99.9 + i * 0.1 for i in range(n)]
+        lowvol_c  = [100 + i * 0.1 for i in range(n)]
+        highvol_h = [100 + i * 2 + (i % 2) * 5 for i in range(n)]
+        highvol_l = [ 95 + i * 2 - (i % 2) * 5 for i in range(n)]
+        highvol_c = [ 98 + i * 2             for i in range(n)]
+
+        a_low  = calc_atr(lowvol_h,  lowvol_l,  lowvol_c,  period=14)
+        a_high = calc_atr(highvol_h, highvol_l, highvol_c, period=14)
+        assert a_high[-1] > a_low[-1]
+
+
+# ========== Stochastic ==========
+
+class TestCalcStochastic:
+    def test_flat_prices_k_equals_50(self):
+        h = [100] * 20; l = [100] * 20; c = [100] * 20
+        result = calc_stochastic(h, l, c, k_period=14, d_period=3)
+        assert result[-1]["k"] == 50.0
+
+    def test_uptrend_k_near_100(self):
+        h = [100 + i for i in range(20)]
+        l = [ 99 + i for i in range(20)]
+        c = [100 + i for i in range(20)]
+        result = calc_stochastic(h, l, c, k_period=14, d_period=3)
+        assert result[-1]["k"] >= 90
+
+    def test_downtrend_k_near_0(self):
+        h = [120 - i for i in range(20)]
+        l = [119 - i for i in range(20)]
+        c = [119 - i for i in range(20)]
+        result = calc_stochastic(h, l, c, k_period=14, d_period=3)
+        assert result[-1]["k"] <= 10
+
+    def test_early_values_are_none(self):
+        h = [100 + i for i in range(20)]
+        l = [ 99 + i for i in range(20)]
+        c = [100 + i for i in range(20)]
+        result = calc_stochastic(h, l, c, k_period=14, d_period=3)
+        assert all(result[i]["k"] is None for i in range(13))
+
+    def test_has_both_k_and_d(self):
+        h = [100 + i for i in range(20)]
+        l = [ 99 + i for i in range(20)]
+        c = [100 + i for i in range(20)]
+        result = calc_stochastic(h, l, c, k_period=14, d_period=3)
+        assert result[-1]["k"] is not None
+        assert result[-1]["d"] is not None
+
+
+# ========== ADX ==========
+
+class TestCalcADX:
+    def test_early_rows_all_none(self):
+        n = 60
+        h = [100 + i * 0.5 for i in range(n)]
+        l = [ 99 + i * 0.5 for i in range(n)]
+        c = [100 + i * 0.5 for i in range(n)]
+        result = calc_adx(h, l, c, period=14)
+        assert all(result[i]["adx"] is None for i in range(14))
+
+    def test_uptrend_plus_di_higher(self):
+        n = 60
+        h = [100 + i * 0.5 for i in range(n)]
+        l = [ 99 + i * 0.5 for i in range(n)]
+        c = [100 + i * 0.5 for i in range(n)]
+        result = calc_adx(h, l, c, period=14)
+        assert result[-1]["plus_di"] > result[-1]["minus_di"]
+
+    def test_downtrend_minus_di_higher(self):
+        n = 60
+        h = [150 - i * 0.5 for i in range(n)]
+        l = [149 - i * 0.5 for i in range(n)]
+        c = [149.5 - i * 0.5 for i in range(n)]
+        result = calc_adx(h, l, c, period=14)
+        assert result[-1]["minus_di"] > result[-1]["plus_di"]
+
+    def test_short_data_all_none(self):
+        result = calc_adx([1, 2, 3], [1, 2, 3], [1, 2, 3], period=14)
+        assert all(r["adx"] is None for r in result)
+
+    def test_trend_has_adx_value(self):
+        n = 60
+        h = [100 + i * 0.5 for i in range(n)]
+        l = [ 99 + i * 0.5 for i in range(n)]
+        c = [100 + i * 0.5 for i in range(n)]
+        result = calc_adx(h, l, c, period=14)
+        assert result[-1]["adx"] is not None
+
+
+# ========== Volume Profile ==========
+
+class TestCalcVolumeProfile:
+    def test_returns_poc_vah_val(self):
+        h = [105, 103, 107, 110, 108]
+        l = [100,  98, 102, 105, 103]
+        v = [1000, 500, 1000, 100, 200]
+        result = calc_volume_profile(h, l, v, num_bins=10)
+        assert "poc" in result
+        assert "vah" in result
+        assert "val" in result
+
+    def test_val_le_poc_le_vah(self):
+        h = [105, 103, 107, 110, 108]
+        l = [100,  98, 102, 105, 103]
+        v = [1000, 500, 1000, 100, 200]
+        result = calc_volume_profile(h, l, v, num_bins=10)
+        assert result["val"] <= result["poc"] <= result["vah"]
+
+    def test_empty_returns_empty_dict(self):
+        assert calc_volume_profile([], [], []) == {}
+
+    def test_flat_price_returns_empty(self):
+        """ราคาแบนทั้งหมด → bin_size = 0 → {}"""
+        assert calc_volume_profile([100] * 5, [100] * 5, [1] * 5) == {}
+
+    def test_bin_count_matches_arg(self):
+        h = [110, 115, 120]
+        l = [100, 105, 110]
+        v = [50, 60, 70]
+        result = calc_volume_profile(h, l, v, num_bins=5)
+        assert len(result["bins"]) == 5
+
+    def test_bin_low_equals_min_low(self):
+        h = [110, 115]; l = [100, 105]; v = [50, 60]
+        result = calc_volume_profile(h, l, v, num_bins=5)
+        assert abs(result["bin_low"] - 100) < 0.01
+
+    def test_mismatched_lengths_returns_empty(self):
+        assert calc_volume_profile([1, 2], [1], [1, 2]) == {}

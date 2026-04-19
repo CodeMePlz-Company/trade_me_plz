@@ -15,9 +15,10 @@ engine.py — BacktestEngine หลัก + SimPortfolio
     - ไม่มี slippage (สำหรับ 1H frame พอรับได้; ควรเพิ่มถ้าย้ายไป 1-5 นาที)
 """
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Optional
 
-from brain.indicators import calc_rsi, calc_bollinger, calc_macd, calc_sma
+from brain.indicators import calc_rsi, calc_bollinger, calc_macd, calc_sma, calc_atr
+from execution.position_sizer import PositionSizer
 
 FEE_RATE    = 0.0025   # 0.25% Bitkub
 MIN_WARMUP  = 50       # ต้องมี bar ≥ 50 ก่อนเริ่มเทรด (สำหรับ SMA50)
@@ -237,7 +238,8 @@ class BacktestEngine:
                  take_profit_pct:   float = 0.05,
                  trailing_stop_pct: float = 0.02,
                  min_confidence:    float = 0.50,
-                 max_daily_loss:    float = 0.05):
+                 max_daily_loss:    float = 0.05,
+                 sizer:             Optional[PositionSizer] = None):
         self.starting_cash     = starting_cash
         self.max_position_pct  = max_position_pct
         self.stop_loss_pct     = stop_loss_pct
@@ -245,6 +247,12 @@ class BacktestEngine:
         self.trailing_stop_pct = trailing_stop_pct
         self.min_confidence    = min_confidence
         self.max_daily_loss    = max_daily_loss
+
+        # default sizer = fixed mode ด้วย max_position_pct เดียวกัน
+        self.sizer = sizer or PositionSizer(
+            mode             = "fixed",
+            max_position_pct = max_position_pct,
+        )
 
     def _check_exit(self, pos: Position,
                     price: float) -> tuple[bool, str]:
@@ -280,7 +288,29 @@ class BacktestEngine:
             verbose: bool = False) -> BacktestResult:
         """เดินผ่านทุก candle แบบ walk-forward"""
         portfolio = SimPortfolio(self.starting_cash)
+        highs     = [c.get("high",  c["close"]) for c in candles]
+        lows      = [c.get("low",   c["close"]) for c in candles]
         closes    = [c["close"] for c in candles]
+
+        # ----- precompute ATR series ครั้งเดียว (speed) -----
+        atr_series: list = calc_atr(highs, lows, closes, period=14) \
+                           if len(closes) >= 15 else [None] * len(closes)
+
+        # ----- running stats ให้ Kelly ใช้ -----
+        wins, losses = 0, 0
+        win_pnls: list[float]  = []
+        loss_pnls: list[float] = []
+
+        def _current_stats() -> dict:
+            total = wins + losses
+            avg_w = (sum(win_pnls)  / wins)   if wins   else 0.0
+            avg_l = (sum(loss_pnls) / losses) if losses else 0.0
+            return {
+                "total_sells":  total,
+                "win_rate_pct": (wins / total * 100) if total else 0.0,
+                "avg_win":      avg_w,
+                "avg_loss":     avg_l,
+            }
 
         # daily loss tracker — reset ทุก 24H
         day_loss  = 0.0
@@ -314,8 +344,14 @@ class BacktestEngine:
                     elif reason == "trailing-stop":
                         portfolio.trailing_stop_hits += 1
 
-                    if trade and trade.pnl < 0:
-                        day_loss += abs(trade.pnl)
+                    if trade:
+                        if trade.pnl > 0:
+                            wins += 1
+                            win_pnls.append(trade.pnl)
+                        elif trade.pnl < 0:
+                            losses += 1
+                            loss_pnls.append(trade.pnl)
+                            day_loss += abs(trade.pnl)
                     if verbose:
                         print(f"  [{i}] {reason.upper()} {symbol} @ {price:,.2f} "
                               f"entry={pos.entry_price:,.0f} "
@@ -340,20 +376,32 @@ class BacktestEngine:
             # ----- 5. execute -----
             if signal["action"] == "buy" and symbol not in portfolio.positions:
                 balance    = portfolio.cash
-                order_size = round(balance * self.max_position_pct, 2)
+                atr_now    = atr_series[i] if i < len(atr_series) else None
+                sizing     = self.sizer.size(balance, price=price,
+                                             atr=atr_now,
+                                             stats=_current_stats())
+                order_size = sizing.size_thb
                 if order_size >= 20:       # Bitkub minimum
                     trade = portfolio.buy(symbol, price, order_size, ts,
-                                          reason=signal["reason"])
+                                          reason=f"{signal['reason']} "
+                                                 f"| sz={sizing.mode_used}")
                     if verbose and trade:
                         print(f"  [{i}] BUY  {symbol} @ {price:,.2f} "
                               f"size={order_size:.0f} "
+                              f"[{sizing.mode_used}] "
                               f"conf={signal['confidence']:.2f}")
 
             elif signal["action"] == "sell" and symbol in portfolio.positions:
                 trade = portfolio.sell(symbol, price, ts,
                                        reason=signal["reason"])
-                if trade and trade.pnl < 0:
-                    day_loss += abs(trade.pnl)
+                if trade:
+                    if trade.pnl > 0:
+                        wins += 1
+                        win_pnls.append(trade.pnl)
+                    elif trade.pnl < 0:
+                        losses += 1
+                        loss_pnls.append(trade.pnl)
+                        day_loss += abs(trade.pnl)
                 if verbose and trade:
                     print(f"  [{i}] SELL {symbol} @ {price:,.2f} "
                           f"pnl={trade.pnl:+.2f}")

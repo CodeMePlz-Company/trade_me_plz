@@ -6,7 +6,9 @@ from datetime import datetime
 import config
 from data.collector        import DataCollector
 from brain.strategy        import run_strategy
+from brain.indicators      import get_all_indicators
 from execution.risk_manager import RiskManager
+from execution.position_sizer import PositionSizer
 from execution.order_manager import (
     get_thb_balance, get_crypto_balance,
     place_buy_market, place_sell_market
@@ -20,6 +22,17 @@ from execution.notifier    import (
 
 # ========== Init ==========
 collector  = DataCollector(config.SYMBOLS)
+
+sizer      = PositionSizer(
+    mode                   = config.POSITION_SIZING_MODE,
+    max_position_pct       = config.MAX_POSITION_PCT,
+    min_position_thb       = config.MIN_POSITION_THB,
+    kelly_fraction         = config.KELLY_FRACTION,
+    kelly_min_trades       = config.KELLY_MIN_TRADES,
+    atr_risk_per_trade_pct = config.ATR_RISK_PER_TRADE_PCT,
+    atr_stop_multiplier    = config.ATR_STOP_MULTIPLIER,
+)
+
 risk       = RiskManager(
     max_position_pct  = config.MAX_POSITION_PCT,
     max_daily_loss    = config.MAX_DAILY_LOSS,
@@ -27,6 +40,7 @@ risk       = RiskManager(
     take_profit_pct   = config.TAKE_PROFIT_PCT,
     trailing_stop_pct = config.TRAILING_STOP_PCT,
     min_confidence    = config.MIN_CONFIDENCE,
+    sizer             = sizer,
 )
 portfolio  = Portfolio()
 
@@ -61,13 +75,27 @@ def run_scan():
 def _handle_buy(signal, balance: float):
     """จัดการ buy signal"""
 
-    # 1. ขอ approval จาก risk manager
+    # 1a. ดึง ATR + portfolio stats เผื่อ sizer ต้องใช้
+    atr_value = None
+    stats     = None
+    if config.POSITION_SIZING_MODE in ("atr", "hybrid"):
+        try:
+            ind = get_all_indicators(signal.symbol, config.RESOLUTION)
+            atr_value = ind.get("atr") if ind else None
+        except Exception as e:
+            print(f"  [SIZER] atr fetch failed: {e}")
+    if config.POSITION_SIZING_MODE in ("kelly", "hybrid"):
+        stats = portfolio.get_summary()
+
+    # 1b. ขอ approval จาก risk manager
     assessment = risk.approve(
         symbol        = signal.symbol,
         action        = "buy",
         confidence    = signal.confidence,
         balance_thb   = balance,
         current_price = signal.price,
+        atr           = atr_value,
+        stats         = stats,
     )
 
     if not assessment.approved:

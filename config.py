@@ -17,7 +17,16 @@ LINE_TARGET_ID            = os.getenv("LINE_TARGET_ID", "")
 
 # ========== Trading ==========
 SYMBOLS    = ["BTC_THB", "ETH_THB", "XRP_THB"]  # coin ที่ต้องการเทรด
-RESOLUTION = "60"                                 # timeframe: 1, 5, 15, 60, 240
+RESOLUTION = "60"                                 # timeframe หลัก: 1, 5, 15, 60, 240
+
+# ========== Multi-Timeframe ==========
+# ใช้ timeframe ใหญ่กว่า confirm ก่อนเข้า entry (เช่น เข้า 1H ต้องให้ 4H agree)
+MTF_ENABLED            = True
+MTF_HIGHER_RESOLUTION  = "240"      # 4H confirm trade 1H
+# strict = ต้อง agree ทิศเดียวกัน / lenient = ห้าม oppose (neutral ผ่าน)
+MTF_MODE               = "lenient"  # "strict" | "lenient"
+MTF_CONFIDENCE_BOOST   = 0.15       # HTF agree → +0.15 confidence
+MTF_CONFIDENCE_PENALTY = 0.30       # (strict) HTF neutral → −0.30 confidence
 
 # ========== Strategy ==========
 STRATEGY_MODE   = "combined"   # indicator / spread / combined
