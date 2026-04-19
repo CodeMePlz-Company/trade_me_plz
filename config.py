@@ -1,0 +1,37 @@
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# ========== API ==========
+API_KEY    = os.getenv("API_KEY", "")
+API_SECRET = os.getenv("API_SECRET", "")
+
+# ========== Webhook ==========
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mysecret123")
+WEBHOOK_PORT   = int(os.getenv("WEBHOOK_PORT", 5000))
+
+# ========== LINE ==========
+LINE_TOKEN = os.getenv("LINE_TOKEN", "")
+
+# ========== Trading ==========
+SYMBOLS    = ["BTC_THB", "ETH_THB", "XRP_THB"]  # coin ที่ต้องการเทรด
+RESOLUTION = "60"                                 # timeframe: 1, 5, 15, 60, 240
+
+# ========== Strategy ==========
+STRATEGY_MODE   = "combined"   # indicator / spread / combined
+MIN_CONFIDENCE  = 0.50         # confidence ขั้นต่ำ
+MIN_SPREAD_PCT  = 0.30         # spread ขั้นต่ำสำหรับ arbitrage
+
+# ========== Risk ==========
+MAX_POSITION_PCT = 0.10   # ใช้เงินไม่เกิน 10% ต่อ order
+MAX_DAILY_LOSS   = 0.05   # หยุดเทรดถ้าขาดทุนเกิน 5% ต่อวัน
+STOP_LOSS_PCT    = 0.03   # stop-loss 3%
+
+# ========== Loop ==========
+SCAN_INTERVAL_SEC   = 60    # สแกนทุก 60 วินาที
+STOP_LOSS_CHECK_SEC = 10    # เช็ค stop-loss ทุก 10 วินาที
+SUMMARY_HOUR        = 22    # ส่งสรุปตอน 22:00
+
+# ========== Simulation ==========
+SIMULATION_MODE = True   # True = ไม่ส่ง order จริง, False = เทรดจริง
