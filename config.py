@@ -12,7 +12,8 @@ WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "mysecret123")
 WEBHOOK_PORT   = int(os.getenv("WEBHOOK_PORT", 5000))
 
 # ========== LINE ==========
-LINE_TOKEN = os.getenv("LINE_TOKEN", "")
+LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN", "")
+LINE_TARGET_ID            = os.getenv("LINE_TARGET_ID", "")
 
 # ========== Trading ==========
 SYMBOLS    = ["BTC_THB", "ETH_THB", "XRP_THB"]  # coin ที่ต้องการเทรด
