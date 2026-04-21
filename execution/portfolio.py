@@ -369,6 +369,39 @@ class Portfolio:
             "open_positions": list(self.open_trades.keys()),
         }
 
+    def get_equity_curve(self,
+                         symbol: Optional[str] = None,
+                         since:  Optional[str] = None) -> list[dict]:
+        """
+        คืนลำดับจุดบน equity curve จาก DB
+
+        แต่ละจุด:
+            timestamp, balance_after, cumulative_pnl, action, symbol
+        เรียงตาม id ascending (timeline)
+        """
+        sql = "SELECT timestamp, symbol, action, pnl, balance_after " \
+              "FROM trades WHERE 1=1"
+        params: list = []
+        if symbol:
+            sql += " AND symbol = ?"; params.append(symbol)
+        if since:
+            sql += " AND timestamp >= ?"; params.append(since)
+        sql += " ORDER BY id ASC"
+
+        rows = self._query(sql, tuple(params))
+        cum = 0.0
+        curve = []
+        for r in rows:
+            cum += r["pnl"] or 0.0
+            curve.append({
+                "timestamp":      r["timestamp"],
+                "symbol":         r["symbol"],
+                "action":         r["action"],
+                "balance_after":  r["balance_after"],
+                "cumulative_pnl": round(cum, 2),
+            })
+        return curve
+
     def load_from_db(self) -> int:
         """โหลด trades ทั้งหมดจาก DB เข้า self.trades (restore state)"""
         self.trades = []

@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<title>Trade Me Plz — Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f172a;
+    --bg2: #1e293b;
+    --card: #1e293b;
+    --fg: #e2e8f0;
+    --muted: #94a3b8;
+    --border: #334155;
+    --good: #22c55e;
+    --bad:  #ef4444;
+    --warn: #f59e0b;
+    --accent: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 24px;
+  }
+  h1 {
+    margin: 0 0 6px;
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .card h3 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .card .val {
+    font-size: 24px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .card .sub2 {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 2px;
+  }
+  .pos { color: var(--good); }
+  .neg { color: var(--bad);  }
+  .row2 {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 14px;
+    margin-bottom: 20px;
+  }
+  @media (max-width: 900px) {
+    .row2 { grid-template-columns: 1fr; }
+  }
+  .panel {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+  }
+  .panel h2 {
+    margin: 0 0 12px;
+    font-size: 14px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td {
+    text-align: left;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  th {
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 11px;
+    text-transform: uppercase;
+  }
+  tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .pill.buy  { background: rgba(34,197,94,0.15);  color: var(--good); }
+  .pill.sell { background: rgba(239,68,68,0.15);  color: var(--bad);  }
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted);
+  }
+  .dot.ok  { background: var(--good); animation: pulse 2s infinite; }
+  .dot.err { background: var(--bad);  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.35; }
+  }
+  canvas { max-width: 100%; }
+  .empty { color: var(--muted); font-size: 13px; padding: 20px; text-align: center; }
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .chip {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 4px 10px;
+    border-radius: 9999px;
+    font-size: 11px;
+  }
+  .chip.accent { color: var(--accent); border-color: var(--accent); }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <div>
+    <h1>📊 Trade Me Plz — Dashboard</h1>
+    <div class="sub" id="sub-info">กำลังโหลด…</div>
+  </div>
+  <div class="status">
+    <span class="dot" id="dot"></span>
+    <span id="last-update">—</span>
+    <span class="chip" id="mode-chip">—</span>
+  </div>
+</div>
+
+<!-- Summary cards -->
+<div class="grid" id="summary-grid">
+  <div class="card"><h3>Total P&amp;L</h3><div class="val" id="total-pnl">—</div><div class="sub2" id="pnl-detail">—</div></div>
+  <div class="card"><h3>Win Rate</h3>   <div class="val" id="win-rate">—</div><div class="sub2" id="wl">—</div></div>
+  <div class="card"><h3>Trades</h3>     <div class="val" id="total-trades">—</div><div class="sub2" id="sells-count">—</div></div>
+  <div class="card"><h3>Profit Factor</h3><div class="val" id="profit-factor">—</div><div class="sub2" id="expectancy">—</div></div>
+  <div class="card"><h3>Best / Worst</h3><div class="val" id="best-worst">—</div><div class="sub2">THB</div></div>
+  <div class="card"><h3>Total Fees</h3>  <div class="val" id="fees">—</div><div class="sub2">THB</div></div>
+</div>
+
+<!-- Equity + P&L-by-symbol -->
+<div class="row2">
+  <div class="panel">
+    <h2>Equity Curve (cumulative P&amp;L)</h2>
+    <canvas id="equity-chart" height="110"></canvas>
+  </div>
+  <div class="panel">
+    <h2>P&amp;L by Symbol</h2>
+    <canvas id="pnl-symbol-chart" height="110"></canvas>
+  </div>
+</div>
+
+<!-- Tables -->
+<div class="row2">
+  <div class="panel">
+    <h2>Recent Trades</h2>
+    <div id="trades-table"></div>
+  </div>
+  <div class="panel">
+    <h2>Open Positions</h2>
+    <div id="positions-table"></div>
+  </div>
+</div>
+
+<script>
+const POLL_MS = 5000;
+const money = n => (n ?? 0).toLocaleString(undefined, {maximumFractionDigits: 2});
+const sign  = n => (n >= 0 ? '+' : '') + money(n);
+const cls   = n => n > 0 ? 'pos' : (n < 0 ? 'neg' : '');
+const fmtTs = t => {
+  try { return new Date(t).toLocaleString(); } catch { return t; }
+};
+
+let equityChart, pnlSymbolChart;
+
+async function get(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(path + ' → ' + r.status);
+  return await r.json();
+}
+
+function drawEquity(points) {
+  const labels = points.map((p, i) => String(i + 1));
+  const data   = points.map(p => p.cumulative_pnl);
+  const ctx = document.getElementById('equity-chart').getContext('2d');
+
+  if (equityChart) {
+    equityChart.data.labels = labels;
+    equityChart.data.datasets[0].data = data;
+    equityChart.update('none');
+    return;
+  }
+  equityChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Cumulative P&L (THB)',
+        data,
+        borderColor: '#38bdf8',
+        backgroundColor: 'rgba(56,189,248,0.12)',
+        tension: 0.2,
+        fill: true,
+        pointRadius: 0,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+      },
+      plugins: { legend: { labels: { color: '#e2e8f0' } } },
+    },
+  });
+}
+
+function drawPnlBySymbol(rows) {
+  const labels = rows.map(r => r.symbol);
+  const data   = rows.map(r => r.total_pnl);
+  const colors = data.map(v => v >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
+
+  const ctx = document.getElementById('pnl-symbol-chart').getContext('2d');
+  if (pnlSymbolChart) {
+    pnlSymbolChart.data.labels = labels;
+    pnlSymbolChart.data.datasets[0].data = data;
+    pnlSymbolChart.data.datasets[0].backgroundColor = colors;
+    pnlSymbolChart.update('none');
+    return;
+  }
+  pnlSymbolChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{ label: 'P&L (THB)', data, backgroundColor: colors }] },
+    options: {
+      responsive: true,
+      scales: {
+        y: { ticks: { color: '#94a3b8' }, grid: { color: '#334155' } },
+        x: { ticks: { color: '#94a3b8' }, grid: { color: '#1e293b' } },
+      },
+      plugins: { legend: { display: false } },
+    },
+  });
+}
+
+function renderTrades(rows) {
+  const el = document.getElementById('trades-table');
+  if (!rows.length) { el.innerHTML = '<div class="empty">ยังไม่มีเทรด</div>'; return; }
+  const head = `<tr>
+    <th>Time</th><th>Symbol</th><th>Action</th>
+    <th class="num">Price</th>
+    <th class="num">THB</th>
+    <th class="num">P&amp;L</th>
+  </tr>`;
+  const body = rows.slice(0, 15).map(r => `<tr>
+    <td>${fmtTs(r.timestamp)}</td>
+    <td>${r.symbol}</td>
+    <td><span class="pill ${r.action}">${r.action}</span></td>
+    <td class="num">${money(r.price)}</td>
+    <td class="num">${money(r.amount_thb)}</td>
+    <td class="num ${cls(r.pnl)}">${r.action === 'sell' ? sign(r.pnl) : '—'}</td>
+  </tr>`).join('');
+  el.innerHTML = `<table>${head}${body}</table>`;
+}
+
+function renderPositions(rows) {
+  const el = document.getElementById('positions-table');
+  if (!rows.length) { el.innerHTML = '<div class="empty">ไม่มี open positions</div>'; return; }
+  const head = `<tr>
+    <th>Symbol</th>
+    <th class="num">Entry</th>
+    <th class="num">Amount</th>
+    <th class="num">Cost (THB)</th>
+  </tr>`;
+  const body = rows.map(r => `<tr>
+    <td>${r.symbol}</td>
+    <td class="num">${money(r.entry_price)}</td>
+    <td class="num">${(r.amount_crypto ?? 0).toFixed(8)}</td>
+    <td class="num">${money(r.amount_thb)}</td>
+  </tr>`).join('');
+  el.innerHTML = `<table>${head}${body}</table>`;
+}
+
+async function refresh() {
+  const dot = document.getElementById('dot');
+  const ts  = document.getElementById('last-update');
+  try {
+    const [summary, trades, bySym, curve, positions, cfg] = await Promise.all([
+      get('/api/summary'),
+      get('/api/trades?limit=15'),
+      get('/api/pnl-by-symbol'),
+      get('/api/equity-curve'),
+      get('/api/open-positions'),
+      get('/api/config'),
+    ]);
+
+    // summary cards
+    document.getElementById('total-pnl').textContent   = sign(summary.total_pnl);
+    document.getElementById('total-pnl').className     = 'val ' + cls(summary.total_pnl);
+    document.getElementById('pnl-detail').textContent  = `${summary.total_sells} sells · net`;
+    document.getElementById('win-rate').textContent    = (summary.win_rate ?? 0) + '%';
+    document.getElementById('wl').textContent          = `${summary.wins}W / ${summary.losses}L`;
+    document.getElementById('total-trades').textContent= summary.total_trades;
+    document.getElementById('sells-count').textContent = `${summary.total_sells} sells`;
+    document.getElementById('profit-factor').textContent = (summary.profit_factor ?? 0).toFixed(2);
+    document.getElementById('expectancy').textContent  = `E[pnl]=${sign(summary.expectancy ?? 0)}`;
+    document.getElementById('best-worst').innerHTML    =
+      `<span class="pos">${sign(summary.best_trade)}</span> / <span class="neg">${sign(summary.worst_trade)}</span>`;
+    document.getElementById('fees').textContent        = money(summary.total_fees);
+
+    // charts
+    drawEquity(curve.points);
+    drawPnlBySymbol(bySym.symbols);
+
+    // tables
+    renderTrades(trades.trades);
+    renderPositions(positions.positions);
+
+    // sub info
+    document.getElementById('sub-info').textContent =
+      `ดูสดจาก SQLite · poll ทุก ${POLL_MS/1000}s · ` +
+      `symbols: ${(cfg.SYMBOLS || []).join(', ')}`;
+    document.getElementById('mode-chip').textContent =
+      (cfg.SIMULATION_MODE ? 'SIMULATION' : 'LIVE') + ' · ' +
+      (cfg.STRATEGY_MODE || '');
+    document.getElementById('mode-chip').className =
+      'chip' + (cfg.SIMULATION_MODE ? '' : ' accent');
+
+    ts.textContent = 'อัพเดท ' + new Date().toLocaleTimeString();
+    dot.className = 'dot ok';
+  } catch (e) {
+    console.error(e);
+    ts.textContent = 'error: ' + e.message;
+    dot.className = 'dot err';
+  }
+}
+
+refresh();
+setInterval(refresh, POLL_MS);
+</script>
+</body>
+</html>

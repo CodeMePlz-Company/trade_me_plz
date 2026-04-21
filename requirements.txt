@@ -3,6 +3,10 @@ python-dotenv
 requests
 websocket-client
 flask
+# Dashboard (web UI)
+fastapi
+uvicorn[standard]
+httpx
 # Testing
 pytest
 pytest-mock
