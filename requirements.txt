@@ -3,7 +3,6 @@ python-dotenv
 requests
 websocket-client
 flask
-
 # Testing
 pytest
 pytest-mock

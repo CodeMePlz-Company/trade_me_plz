@@ -587,6 +587,183 @@ with tempfile.TemporaryDirectory() as tmp:
     check("best_trade > worst_trade",
           s["best_trade"] > s["worst_trade"])
 
+    # enhanced summary fields (SQLite era)
+    check("summary has profit_factor", "profit_factor" in s)
+    check("summary has expectancy",    "expectancy" in s)
+    check("summary has avg_win/avg_loss",
+          "avg_win" in s and "avg_loss" in s)
+    check("summary has total_fees",    "total_fees" in s)
+    check("summary has win_rate_pct alias",
+          s["win_rate_pct"] == s["win_rate"])
+    check("avg_win > 0",   s["avg_win"] > 0)
+    check("avg_loss < 0",  s["avg_loss"] < 0)
+    check("profit_factor > 0 for mixed", s["profit_factor"] > 0)
+
+
+# ========== PORTFOLIO SQLITE ==========
+print("\n[PORTFOLIO SQLITE]")
+import sqlite3 as _sq
+from execution.portfolio import Portfolio, DB_FILE
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.chdir(tmp)
+
+    # custom db_path isolation
+    p = Portfolio(db_path="logs/test1.db", skip_migration=True)
+    check("custom db_path file created",
+          os.path.exists("logs/test1.db"))
+    check("DB_FILE constant exists", DB_FILE == "logs/trades.db")
+
+    # schema check
+    with _sq.connect("logs/test1.db") as con:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(trades)")]
+    check("DB has id column",          "id" in cols)
+    check("DB has all 9 data columns", all(c in cols for c in [
+        "timestamp", "symbol", "action", "price",
+        "amount_thb", "amount_crypto", "fee", "pnl", "balance_after",
+    ]))
+
+    # insert via API → row in DB
+    p.record_buy("BTC_THB", 1_000_000, 1000, 2.5, 9000)
+    with _sq.connect("logs/test1.db") as con:
+        cnt = con.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    check("record_buy writes to DB", cnt == 1)
+
+    c = p.open_trades["BTC_THB"]["amount_crypto"]
+    p.record_sell("BTC_THB", 1_100_000, c, 2.75, 10000)
+    with _sq.connect("logs/test1.db") as con:
+        cnt = con.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+    check("record_sell writes to DB", cnt == 2)
+
+    # get_trades() all
+    all_trades = p.get_trades()
+    check("get_trades() returns 2", len(all_trades) == 2)
+    check("get_trades() returns dicts with columns",
+          isinstance(all_trades[0], dict) and "pnl" in all_trades[0])
+
+    # get_trades() filter by symbol
+    btc = p.get_trades(symbol="BTC_THB")
+    check("get_trades(symbol=) filters", len(btc) == 2)
+    eth = p.get_trades(symbol="ETH_THB")
+    check("get_trades(symbol= other) = 0", len(eth) == 0)
+
+    # get_trades() filter by action
+    buys  = p.get_trades(action="buy")
+    sells = p.get_trades(action="sell")
+    check("get_trades(action=buy)  = 1", len(buys) == 1)
+    check("get_trades(action=sell) = 1", len(sells) == 1)
+
+    # get_trades() limit
+    p.record_buy("ETH_THB", 50_000, 1000, 2.5, 9000)
+    c2 = p.open_trades["ETH_THB"]["amount_crypto"]
+    p.record_sell("ETH_THB", 45_000, c2, 2.25, 8000)
+    limited = p.get_trades(limit=2)
+    check("get_trades(limit=2) respects limit", len(limited) == 2)
+
+    # get_pnl_by_symbol()
+    by_sym = p.get_pnl_by_symbol()
+    check("get_pnl_by_symbol returns 2 rows", len(by_sym) == 2)
+    syms = {r["symbol"] for r in by_sym}
+    check("contains BTC + ETH", syms == {"BTC_THB", "ETH_THB"})
+    btc_row = next(r for r in by_sym if r["symbol"] == "BTC_THB")
+    check("BTC aggregate has pnl > 0", btc_row["total_pnl"] > 0)
+    check("BTC aggregate sells=1",     btc_row["sells"] == 1)
+
+    # get_all_time_summary()
+    ats = p.get_all_time_summary()
+    check("all_time_summary total_trades=4", ats["total_trades"] == 4)
+    check("all_time_summary total_sells=2", ats["total_sells"]  == 2)
+    check("all_time_summary wins=1",        ats["wins"]    == 1)
+    check("all_time_summary losses=1",      ats["losses"]  == 1)
+    check("all_time_summary win_rate=50",   ats["win_rate"] == 50.0)
+    check("all_time_summary has profit_factor", "profit_factor" in ats)
+
+    # persistence across Portfolio instances (same db_path)
+    p_again = Portfolio(db_path="logs/test1.db", skip_migration=True)
+    check("new instance sees empty self.trades",
+          p_again.trades == [])
+    loaded = p_again.load_from_db()
+    check("load_from_db() restores 4 trades", loaded == 4)
+    check("self.trades repopulated", len(p_again.trades) == 4)
+    check("restored trades have pnl on sell",
+          any(t.pnl != 0 for t in p_again.trades))
+
+    # all-time summary should still show 4 for new instance
+    ats2 = p_again.get_all_time_summary()
+    check("persistence: all-time same across instances",
+          ats2["total_trades"] == 4)
+
+    # export_csv round-trip
+    n_exported = p.export_csv("logs/export.csv")
+    check("export_csv returns row count", n_exported == 4)
+    check("export_csv creates file",
+          os.path.exists("logs/export.csv"))
+    import csv
+    with open("logs/export.csv") as f:
+        rows = list(csv.DictReader(f))
+    check("exported CSV has 4 rows", len(rows) == 4)
+    check("exported CSV has correct fields",
+          set(rows[0].keys()) == {
+              "timestamp", "symbol", "action", "price",
+              "amount_thb", "amount_crypto", "fee", "pnl",
+              "balance_after",
+          })
+
+    # DB isolation via db_path
+    p_iso = Portfolio(db_path="logs/isolated.db", skip_migration=True)
+    check("isolated DB has 0 trades",
+          p_iso.get_all_time_summary()["total_trades"] == 0)
+    check("original DB still has 4 trades",
+          p.get_all_time_summary()["total_trades"] == 4)
+
+
+# ========== PORTFOLIO CSV MIGRATION ==========
+print("\n[PORTFOLIO CSV MIGRATION]")
+import csv
+
+with tempfile.TemporaryDirectory() as tmp:
+    os.chdir(tmp)
+    os.makedirs("logs", exist_ok=True)
+
+    # write a legacy CSV
+    legacy = [
+        ["timestamp", "symbol", "action", "price",
+         "amount_thb", "amount_crypto", "fee", "pnl", "balance_after"],
+        ["2025-01-01T00:00:00", "BTC_THB", "buy",
+         "1000000", "1000", "0.000997", "2.5", "0", "9000"],
+        ["2025-01-02T00:00:00", "BTC_THB", "sell",
+         "1100000", "1100", "0.000997", "2.75", "94.5", "10000"],
+    ]
+    with open("logs/trades.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        for row in legacy:
+            w.writerow(row)
+
+    # fresh DB → should trigger migration
+    p_mig = Portfolio(db_path="logs/trades.db")
+    ats = p_mig.get_all_time_summary()
+    check("CSV migration: 2 rows imported", ats["total_trades"] == 2)
+    check("CSV migration: sells=1", ats["total_sells"] == 1)
+    check("CSV migration: pnl captured",
+          abs(ats["total_pnl"] - 94.5) < 0.1)
+
+    # second construction should NOT re-migrate (DB already has rows)
+    p_mig2 = Portfolio(db_path="logs/trades.db")
+    check("no duplicate on re-construct",
+          p_mig2.get_all_time_summary()["total_trades"] == 2)
+
+    # skip_migration param
+    with tempfile.TemporaryDirectory() as tmp2:
+        os.chdir(tmp2)
+        os.makedirs("logs", exist_ok=True)
+        with open("logs/trades.csv", "w", newline="") as f:
+            w = csv.writer(f)
+            for row in legacy:
+                w.writerow(row)
+        p_skip = Portfolio(db_path="logs/skip.db", skip_migration=True)
+        check("skip_migration=True bypasses import",
+              p_skip.get_all_time_summary()["total_trades"] == 0)
+
 
 # ========== Summary ==========
 print(f"\n{'='*50}")
